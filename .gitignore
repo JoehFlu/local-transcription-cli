@@ -1,0 +1,12 @@
+.DS_Store
+__pycache__/
+.pytest_cache/
+.venv/
+
+*_транскрипция.txt
+*.mp3
+*.mp4
+*_seg*.wav
+*_seg*.txt
+
+*.log
