@@ -10,6 +10,12 @@ import tempfile
 import argparse
 from datetime import timedelta
 
+AUDIO_VIDEO_FORMATS_TO_CONVERT = {
+    ".mp4", ".mov", ".avi", ".mkv", ".webm",
+    ".m4a", ".mp3", ".flac", ".aac", ".ogg",
+}
+
+
 def positive_int(value: str) -> int:
     parsed = int(value)
     if parsed <= 0:
@@ -80,7 +86,7 @@ def clean_text(text: str) -> str:
 
 
 def needs_conversion(file_path: str) -> bool:
-    return Path(file_path).suffix.lower() in {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4a", ".mp3"}
+    return Path(file_path).suffix.lower() in AUDIO_VIDEO_FORMATS_TO_CONVERT
 
 
 def convert_to_wav(input_file: str) -> str:
@@ -125,6 +131,7 @@ def main():
     parser.add_argument("input_file", help="Путь к аудио/видео файлу")
     parser.add_argument("--model", choices=["rnnt", "ctc"], default="rnnt")
     parser.add_argument("--segment", type=positive_int, default=20)
+    parser.add_argument("--output", help="Путь к выходному txt-файлу")
     args = parser.parse_args()
     ensure_dependency("ffmpeg")
     ensure_dependency("gigaam-mlx")
@@ -145,7 +152,7 @@ def main():
 
         segments = split_wav(wav_file, args.segment)
 
-        output_file = input_path.stem + "_транскрипция.txt"
+        output_file = args.output or (input_path.stem + "_транскрипция.txt")
 
         print(f"\n📝 Транскрипция ({args.model.upper()})...\n")
 
@@ -179,11 +186,6 @@ def main():
         for seg in segments:
             Path(seg).unlink(missing_ok=True)
             Path(seg).with_suffix(".txt").unlink(missing_ok=True)
-
-        for f in Path(".").glob("*_seg*.wav"):
-            f.unlink(missing_ok=True)
-        for f in Path(".").glob("*_seg*.txt"):
-            f.unlink(missing_ok=True)
 
         print("🧹 Все временные файлы удалены")
 
