@@ -30,12 +30,18 @@ def ensure_dependency(command: str) -> None:
     sys.exit(1)
 
 
-def run_command(command: list[str], capture_output: bool = False) -> subprocess.CompletedProcess:
+def run_command(
+    command: list[str],
+    capture_output: bool = False,
+    input_text: str | None = None,
+) -> subprocess.CompletedProcess:
     try:
         kwargs = {
             "check": True,
             "text": True,
         }
+        if input_text is not None:
+            kwargs["input"] = input_text
         if capture_output:
             kwargs["capture_output"] = True
         else:
@@ -126,15 +132,87 @@ def format_timestamp(seconds: int) -> str:
     return str(timedelta(seconds=seconds)).split('.')[0]
 
 
+def build_ollama_prompt(transcript: str) -> str:
+    task = (
+        "Сделай краткую структурированную сводку на русском языке. "
+        "Выдели главные тезисы и action items, если они есть. "
+        "Используй только факты, которые прямо есть в транскрипте. "
+        "Не додумывай роли, детали, технологии, мотивы или формулировки, которых в тексте нет. "
+        "Если формулировка неочевидна, выбери более нейтральное и осторожное описание. "
+        "Старайся использовать формулировки, максимально близкие к исходному разговору. "
+        "Не усиливай утверждения и не делай выводы увереннее, чем это звучит в транскрипте. "
+        "Не показывай ход рассуждений, черновики, Thinking, Thinking Process "
+        "или пояснения о своей работе."
+    )
+    return (
+        f"{task}\n\n"
+        "Верни только итоговый текст без пояснений о своей работе.\n\n"
+        f"Транскрипт:\n{transcript}"
+    )
+
+
+def run_ollama_postprocess(transcript: str, model: str) -> str:
+    prompt = build_ollama_prompt(transcript)
+    result = run_command(
+        ["ollama", "run", model],
+        capture_output=True,
+        input_text=prompt,
+    )
+    return sanitize_ollama_output(result.stdout)
+
+
+def sanitize_ollama_output(text: str) -> str:
+    cleaned = text.strip()
+    if not cleaned:
+        return ""
+
+    cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
+    cleaned = cleaned.replace("...done thinking.", "").strip()
+
+    heading_match = re.search(r"(?m)^#\s+.+", cleaned)
+    if heading_match:
+        return cleaned[heading_match.start():].strip()
+
+    bold_heading_match = re.search(r"(?m)^\*\*[^*\n]+\*\*", cleaned)
+    if bold_heading_match:
+        return cleaned[bold_heading_match.start():].strip()
+
+    summary_markers = [
+        "Итоги",
+        "Сводка",
+        "Резюме",
+        "Ключевые тезисы",
+        "Action Items",
+    ]
+    for marker in summary_markers:
+        marker_match = re.search(rf"(?m)^{re.escape(marker)}.*", cleaned)
+        if marker_match:
+            return cleaned[marker_match.start():].strip()
+
+    return cleaned
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("input_file", help="Путь к аудио/видео файлу")
     parser.add_argument("--model", choices=["rnnt", "ctc"], default="rnnt")
     parser.add_argument("--segment", type=positive_int, default=20)
     parser.add_argument("--output", help="Путь к выходному txt-файлу")
+    parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="Дополнительно обработать итоговый транскрипт через Ollama и сохранить *_summary.txt",
+    )
+    parser.add_argument(
+        "--ollama-model",
+        default="qwen3.5:4b",
+        help="Локальная модель Ollama для постобработки, например qwen3.5:4b",
+    )
     args = parser.parse_args()
     ensure_dependency("ffmpeg")
     ensure_dependency("gigaam-mlx")
+    if args.summary:
+        ensure_dependency("ollama")
 
     input_path = Path(args.input_file)
     if not input_path.exists():
@@ -153,6 +231,7 @@ def main():
         segments = split_wav(wav_file, args.segment)
 
         output_file = args.output or (input_path.stem + "_транскрипция.txt")
+        transcript_chunks = []
 
         print(f"\n📝 Транскрипция ({args.model.upper()})...\n")
 
@@ -172,12 +251,31 @@ def main():
                 if cleaned:
                     print(cleaned[:120] + "..." if len(cleaned) > 120 else cleaned)
                     f.write(f"[{ts}]\n{cleaned}\n\n")
+                    transcript_chunks.append(f"[{ts}]\n{cleaned}")
                 else:
                     print("(пусто)")
 
                 current_time += args.segment
 
         print(f"\n✅ Готово! Результат сохранён в: {output_file}")
+
+        if args.summary and transcript_chunks:
+            print(f"🧠 Постобработка через Ollama ({args.ollama_model})...")
+            llm_result = run_ollama_postprocess(
+                transcript="\n\n".join(transcript_chunks),
+                model=args.ollama_model,
+            )
+            llm_output_path = input_path.with_name(f"{input_path.stem}_summary.txt")
+            with open(llm_output_path, "w", encoding="utf-8") as f:
+                f.write("LLM POST-PROCESSING\n")
+                f.write(
+                    f"Модель распознавания: {args.model.upper()} | "
+                    f"Ollama: {args.ollama_model}\n"
+                )
+                f.write("=" * 70 + "\n\n")
+                f.write(llm_result + "\n")
+
+            print(f"✅ LLM-результат сохранён в: {llm_output_path}")
 
     finally:
         if wav_file and wav_file != args.input_file:

@@ -4,6 +4,7 @@ __pycache__/
 .venv/
 
 *_транскрипция.txt
+*_summary.txt
 *.mp3
 *.mp4
 *_seg*.wav
