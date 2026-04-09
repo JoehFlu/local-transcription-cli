@@ -75,7 +75,7 @@ gigaam-mlx --help
 
 ```bash
 source ~/gigaam-env/bin/activate
-python3 transcribe.py audio.mp4 --model rnnt --segment 20
+python3 transcribe.py audio.mp3 --model rnnt --segment 20
 ```
 
 Базовый запуск:
