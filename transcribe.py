@@ -1,6 +1,3 @@
-# source ~/gigaam-env/bin/activate
-# python3 transcribe.py audio.mp4 --model rnnt --segment 20
-
 import subprocess
 import sys
 import re
@@ -64,13 +61,8 @@ def clean_text(text: str) -> str:
     if not text:
         return ""
 
-    # Убираем Audio: 20. 0s
     text = re.sub(r'Audio:\s*\d+\.?\s*0?s?', '', text, flags=re.IGNORECASE)
-
-    # Убираем обрезанные слова в конце строки (типа "на пос-", "кото-")
     text = re.sub(r'\s+[a-zA-Zа-яА-ЯёЁ-]{2,7}-\s*$', '', text, flags=re.MULTILINE)
-
-    # Убираем таймкоды и мусор
     text = re.sub(r'\[\d{2}:\d{2}:\d{2},\d{3} -> \d{2}:\d{2}:\d{2},\d{3}\]', '', text)
     text = re.sub(r'Loading audio:.*', '', text, flags=re.IGNORECASE)
     text = re.sub(r'Split into \d+ chunks', '', text)
@@ -78,12 +70,8 @@ def clean_text(text: str) -> str:
     text = re.sub(r'Saved: .*', '', text)
     text = re.sub(r'tmp\w+_\w+', '', text)
 
-    # Собираем строки и убираем пустые
     lines = [line.strip() for line in text.split('\n') if line.strip()]
-
     text = ' '.join(lines)
-
-    # Самая простая финальная чистка
     text = re.sub(r'\s+', ' ', text)
     text = re.sub(r'\s+([.,!?])', r'\1', text)
     text = re.sub(r'([.!?])\s*', r'\1 ', text)
