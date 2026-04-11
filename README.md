@@ -49,6 +49,8 @@ pip install -U pip
 pip install -r requirements.txt
 ```
 
+Файл `requirements.txt` устанавливает базовые Python-зависимости проекта, включая `gigaam` и `mlx`.
+
 ### 3. Установить `ffmpeg`
 
 На macOS с Homebrew:
@@ -69,6 +71,12 @@ ffmpeg -version
 
 ```bash
 python3 -c "import gigaam, mlx; print('gigaam ok')"
+```
+
+Если хотите установить зависимости вручную без `requirements.txt`:
+
+```bash
+pip install gigaam mlx
 ```
 
 ### 5. Установить `Ollama` и модель `ministral-3:8b` (опционально)
