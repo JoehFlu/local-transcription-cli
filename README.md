@@ -25,11 +25,13 @@
 
 ## Требования
 
-- Python 3.10+
+- Python 3.11+
 - `ffmpeg`
 - `gigaam`
 - `mlx`
 - `ollama` для LLM-постобработки
+
+> Важно: для этого проекта лучше использовать Python 3.11. На Python 3.14 зависимости `gigaam`/`mlx` могут не устанавливаться или работать нестабильно.
 
 ## Установка
 
@@ -43,7 +45,7 @@ cd local-transcription-cli
 ### 2. Подготовить окружение Python
 
 ```bash
-python3 -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -U pip
 pip install -r requirements.txt
@@ -70,7 +72,7 @@ ffmpeg -version
 После установки убедитесь, что Python-модули импортируются:
 
 ```bash
-python3 -c "import gigaam, mlx; print('gigaam ok')"
+python -c "import gigaam, mlx; print('gigaam ok')"
 ```
 
 Если хотите установить зависимости вручную без `requirements.txt`:
@@ -79,13 +81,13 @@ python3 -c "import gigaam, mlx; print('gigaam ok')"
 pip install gigaam mlx
 ```
 
-### 5. Установить `Ollama` и модель `ministral-3:8b` (опционально)
+### 5. Установить `Ollama` и модель `qwen3.5:4b` (опционально)
 
 Если нужна локальная постобработка транскрипта:
 
 ```bash
 ollama --version
-ollama pull ministral-3:8b
+ollama pull qwen3.5:4b
 ```
 
 ## Использование
@@ -94,7 +96,7 @@ ollama pull ministral-3:8b
 
 ```bash
 source .venv/bin/activate
-python3 transcribe.py audio.mp3 --model rnnt --segment 15
+python transcribe.py audio.mp3 --model rnnt --segment 15
 ```
 
 При первом запуске `gigaam` скачает веса модели в локальную папку `.cache/gigaam`, поэтому первый старт может занять заметно больше времени.
@@ -102,33 +104,33 @@ python3 transcribe.py audio.mp3 --model rnnt --segment 15
 Базовый запуск:
 
 ```bash
-python3 transcribe.py video.mp4
+python transcribe.py video.mp4
 ```
 
 Выбор модели и длины сегмента:
 
 ```bash
-python3 transcribe.py video.mp4 --model rnnt --segment 15
+python transcribe.py video.mp4 --model rnnt --segment 15
 ```
 
 Явно указать путь к выходному файлу:
 
 ```bash
-python3 transcribe.py audio.mp3 --output result.txt
+python transcribe.py audio.mp3 --output result.txt
 ```
 
 Транскрибация с дополнительной постобработкой через `Ollama`:
 
 ```bash
-python3 transcribe.py audio.mp3 --summary
+python transcribe.py audio.mp3 --summary
 ```
 
-По умолчанию `--summary` использует модель `ministral-3:8b` и сохраняет краткую структурированную сводку в отдельный `*_summary.txt`.
+По умолчанию `--summary` использует модель `qwen3.5:4b` и сохраняет краткую структурированную сводку в отдельный `*_summary.txt`.
 
 Явно выбрать другую модель:
 
 ```bash
-python3 transcribe.py audio.mp3 --summary --ollama-model ministral-3:8b
+python transcribe.py audio.mp3 --summary --ollama-model qwen3.5:4b
 ```
 
 ## Пример результата
@@ -161,7 +163,7 @@ python3 transcribe.py audio.mp3 --summary --ollama-model ministral-3:8b
 
 ## LLM Post-Processing
 
-`gigaam` отвечает за распознавание речи, а `Ollama` с локальной моделью вроде `ministral-3:8b` может:
+`gigaam` отвечает за распознавание речи, а `Ollama` с локальной моделью вроде `qwen3.5:4b` может:
 
 - убирать слова-паразиты;
 - исправлять пунктуацию;

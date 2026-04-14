@@ -53,6 +53,12 @@ def ensure_python_dependency(module_name: str, package_name: str) -> None:
     except ImportError:
         print(f"❌ Python-модуль не найден: {module_name}")
         print(f"Установите пакет: pip install {package_name}")
+        print(
+            "Подсказка: этот проект лучше запускать из venv на Python 3.11, "
+            "например: python3.11 -m venv .venv && source .venv/bin/activate"
+        )
+        print(f"Текущий интерпретатор: {sys.executable}")
+        print(f"Текущая версия Python: {sys.version.split()[0]}")
         sys.exit(1)
 
 
@@ -343,8 +349,8 @@ def main():
     )
     parser.add_argument(
         "--ollama-model",
-        default="ministral-3:8b",
-        help="Локальная модель Ollama для постобработки, например ministral-3:8b",
+        default="qwen3.5:4b",
+        help="Локальная модель Ollama для постобработки, например qwen3.5:4b",
     )
     args = parser.parse_args()
     ensure_dependency("ffmpeg")
