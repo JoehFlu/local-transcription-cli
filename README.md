@@ -81,13 +81,13 @@ python -c "import gigaam, mlx; print('gigaam ok')"
 pip install gigaam mlx
 ```
 
-### 5. Установить `Ollama` и модель `qwen3.5:4b` (опционально)
+### 5. Установить `Ollama` и модель `ministral-3:3b` (опционально)
 
 Если нужна локальная постобработка транскрипта:
 
 ```bash
 ollama --version
-ollama pull qwen3.5:4b
+ollama pull ministral-3:3b
 ```
 
 ## Использование
@@ -125,12 +125,12 @@ python transcribe.py audio.mp3 --output result.txt
 python transcribe.py audio.mp3 --summary
 ```
 
-По умолчанию `--summary` использует модель `qwen3.5:4b` и сохраняет краткую структурированную сводку в отдельный `*_summary.txt`.
+По умолчанию `--summary` использует модель `ministral-3:3b` и сохраняет краткую структурированную сводку в отдельный `*_summary.txt`.
 
 Явно выбрать другую модель:
 
 ```bash
-python transcribe.py audio.mp3 --summary --ollama-model qwen3.5:4b
+python transcribe.py audio.mp3 --summary --ollama-model ministral-3:3b
 ```
 
 ## Пример результата
@@ -163,7 +163,7 @@ python transcribe.py audio.mp3 --summary --ollama-model qwen3.5:4b
 
 ## LLM Post-Processing
 
-`gigaam` отвечает за распознавание речи, а `Ollama` с локальной моделью вроде `qwen3.5:4b` может:
+`gigaam` отвечает за распознавание речи, а `Ollama` с локальной моделью вроде `ministral-3:3b` может:
 
 - убирать слова-паразиты;
 - исправлять пунктуацию;

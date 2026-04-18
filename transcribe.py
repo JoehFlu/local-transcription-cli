@@ -349,8 +349,8 @@ def main():
     )
     parser.add_argument(
         "--ollama-model",
-        default="qwen3.5:4b",
-        help="Локальная модель Ollama для постобработки, например qwen3.5:4b",
+        default="ministral-3:3b",
+        help="Локальная модель Ollama для постобработки, например ministral-3:3b",
     )
     args = parser.parse_args()
     ensure_dependency("ffmpeg")
