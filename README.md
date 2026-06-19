@@ -1,14 +1,13 @@
 # Local Transcription CLI
 
-Небольшой CLI-скрипт для локальной транскрибации аудио и видео через `ffmpeg`, `gigaam` и `mlx`.
+Небольшой CLI-скрипт для локальной транскрибации аудио и видео через `ffmpeg` и `gigaam`.
 
 Скрипт:
 - принимает аудио или видеофайл;
 - при необходимости конвертирует его в `wav 16kHz mono`;
 - разбивает запись на сегменты;
 - прогоняет каждый сегмент через `gigaam`;
-- сохраняет результат в `.txt` с таймкодами;
-- опционально прогоняет готовый транскрипт через `Ollama`.
+- сохраняет результат в `.txt` с таймкодами.
 
 ## Зачем это нужно
 
@@ -21,17 +20,14 @@
 - Настраиваемая длина сегмента
 - Сохранение результата в текстовый файл
 - Минимальная постобработка шума из вывода распознавания
-- Опциональная локальная постобработка через `Ollama`
 
 ## Требования
 
 - Python 3.11+
 - `ffmpeg`
 - `gigaam`
-- `mlx`
-- `ollama` для LLM-постобработки
 
-> Важно: для этого проекта лучше использовать Python 3.11. На Python 3.14 зависимости `gigaam`/`mlx` могут не устанавливаться или работать нестабильно.
+> Важно: для этого проекта лучше использовать Python 3.11. На Python 3.14 зависимости `gigaam` могут не устанавливаться или работать нестабильно.
 
 ## Установка
 
@@ -42,7 +38,25 @@ git clone https://github.com/JoehFlu/local-transcription-cli.git
 cd local-transcription-cli
 ```
 
-### 2. Подготовить окружение Python
+### 2. Установить системные зависимости в Ubuntu/WSL
+
+В Ubuntu внутри WSL:
+
+```bash
+sudo apt update
+sudo apt install -y ffmpeg python3.11 python3.11-venv python3-pip
+```
+
+Проверка:
+
+```bash
+ffmpeg -version
+python3.11 --version
+```
+
+Если пакет `python3.11` недоступен в вашей версии Ubuntu, установите Python 3.11 любым привычным способом для вашего дистрибутива, затем возвращайтесь к следующему шагу.
+
+### 3. Подготовить окружение Python
 
 ```bash
 python3.11 -m venv .venv
@@ -51,43 +65,20 @@ pip install -U pip
 pip install -r requirements.txt
 ```
 
-Файл `requirements.txt` устанавливает базовые Python-зависимости проекта, включая `gigaam` и `mlx`.
-
-### 3. Установить `ffmpeg`
-
-На macOS с Homebrew:
-
-```bash
-brew install ffmpeg
-```
-
-Проверка:
-
-```bash
-ffmpeg -version
-```
+Файл `requirements.txt` устанавливает базовые Python-зависимости проекта, включая `gigaam`.
 
 ### 4. Проверить Python-зависимости
 
 После установки убедитесь, что Python-модули импортируются:
 
 ```bash
-python -c "import gigaam, mlx; print('gigaam ok')"
+python -c "import gigaam; print('gigaam ok')"
 ```
 
 Если хотите установить зависимости вручную без `requirements.txt`:
 
 ```bash
-pip install gigaam mlx
-```
-
-### 5. Установить `Ollama` и модель `ministral-3:3b` (опционально)
-
-Если нужна локальная постобработка транскрипта:
-
-```bash
-ollama --version
-ollama pull ministral-3:3b
+pip install gigaam
 ```
 
 ## Использование
@@ -96,41 +87,51 @@ ollama pull ministral-3:3b
 
 ```bash
 source .venv/bin/activate
-python transcribe.py audio.mp3 --model rnnt --segment 15
+python transcribe.py
 ```
+
+Если в текущей папке лежит ровно один аудио/видео файл, скрипт найдёт его автоматически по расширению. Переименовывать файл в `video.mp4` или `audio.mp3` не нужно.
+
+По умолчанию результат сохраняется в файл `<имя_исходного_файла>_transcript.txt`.
 
 При первом запуске `gigaam` скачает веса модели в локальную папку `.cache/gigaam`, поэтому первый старт может занять заметно больше времени.
 
-Базовый запуск:
+Если в WSL скачивание модели падает из-за сети, скачайте нужный файл вручную и положите его в кэш проекта:
 
 ```bash
-python transcribe.py video.mp4
+mkdir -p .cache/gigaam
+```
+
+Для модели `rnnt` нужен файл:
+
+```text
+https://cdn.chatwm.opensmodel.sberdevices.ru/GigaAM/v2_rnnt.ckpt
+```
+
+Сохраните его как:
+
+```text
+.cache/gigaam/v2_rnnt.ckpt
+```
+
+После этого повторный запуск возьмёт модель из локального кэша.
+
+Явно указать файл, если в папке несколько медиафайлов:
+
+```bash
+python transcribe.py interview.mkv
 ```
 
 Выбор модели и длины сегмента:
 
 ```bash
-python transcribe.py video.mp4 --model rnnt --segment 15
+python transcribe.py interview.mkv --model rnnt --segment 15
 ```
 
 Явно указать путь к выходному файлу:
 
 ```bash
-python transcribe.py audio.mp3 --output result.txt
-```
-
-Транскрибация с дополнительной постобработкой через `Ollama`:
-
-```bash
-python transcribe.py audio.mp3 --summary
-```
-
-По умолчанию `--summary` использует модель `ministral-3:3b` и сохраняет краткую структурированную сводку в отдельный `*_summary.txt`.
-
-Явно выбрать другую модель:
-
-```bash
-python transcribe.py audio.mp3 --summary --ollama-model ministral-3:3b
+python transcribe.py interview.mp3 --output result.txt
 ```
 
 ## Пример результата
@@ -151,30 +152,13 @@ python transcribe.py audio.mp3 --summary --ollama-model ministral-3:3b
 3. Аудио режется на сегменты фиксированной длины.
 4. Каждый сегмент отправляется в `gigaam`.
 5. Результат очищается от служебного мусора и сохраняется в `.txt`.
-6. При указании `--summary` итоговый транскрипт дополнительно отправляется в `Ollama`.
 
 ## Ограничения
 
 - На практике для `rnnt` чаще лучше работают сегменты около `15` секунд, чем `20+`.
 - Таймкоды сейчас считаются по размеру сегмента, а не по фактической длительности каждого куска.
 - Постобработка текста остаётся минимальной и может требовать ручной правки.
-- LLM-постобработка увеличивает время выполнения и зависит от локально загруженной модели в `Ollama`.
 - Для очень длинных файлов производительность зависит от скорости `ffmpeg` и модели распознавания.
-
-## LLM Post-Processing
-
-`gigaam` отвечает за распознавание речи, а `Ollama` с локальной моделью вроде `ministral-3:3b` может:
-
-- убирать слова-паразиты;
-- исправлять пунктуацию;
-- делать краткое резюме разговора;
-- извлекать action items;
-- переводить устную речь в более читаемый письменный текст.
-
-При включении `--summary` скрипт сохраняет второй файл рядом с исходным входным файлом, например:
-
-- `audio_транскрипция.txt`
-- `audio_summary.txt`
 
 ## License
 

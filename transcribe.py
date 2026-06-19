@@ -6,14 +6,17 @@ from pathlib import Path
 import tempfile
 import argparse
 import warnings
+import urllib.error
 from datetime import timedelta
 
 AUDIO_VIDEO_FORMATS_TO_CONVERT = {
     ".mp4", ".mov", ".avi", ".mkv", ".webm",
     ".m4a", ".mp3", ".flac", ".aac", ".ogg",
 }
+SUPPORTED_MEDIA_FORMATS = AUDIO_VIDEO_FORMATS_TO_CONVERT | {".wav"}
 
 MODEL_CACHE_DIR = Path(".cache/gigaam")
+GIGAAM_MODEL_BASE_URL = "https://cdn.chatwm.opensmodel.sberdevices.ru/GigaAM"
 MAX_SHORTFORM_SEGMENT_SECONDS = 25
 
 warnings.filterwarnings(
@@ -40,10 +43,12 @@ def positive_int(value: str) -> int:
     return parsed
 
 
-def ensure_dependency(command: str) -> None:
+def ensure_dependency(command: str, install_hint: str | None = None) -> None:
     if shutil.which(command):
         return
     print(f"❌ Команда не найдена: {command}")
+    if install_hint:
+        print(f"Установите её: {install_hint}")
     sys.exit(1)
 
 
@@ -196,6 +201,50 @@ def needs_conversion(file_path: str) -> bool:
     return Path(file_path).suffix.lower() in AUDIO_VIDEO_FORMATS_TO_CONVERT
 
 
+def find_media_files(directory: Path) -> list[Path]:
+    return sorted(
+        (
+            path
+            for path in directory.iterdir()
+            if path.is_file() and path.suffix.lower() in SUPPORTED_MEDIA_FORMATS
+        ),
+        key=lambda path: path.name.casefold(),
+    )
+
+
+def resolve_input_file(input_file: str | None) -> Path:
+    if input_file:
+        input_path = Path(input_file)
+        if not input_path.exists():
+            print(f"❌ Файл не найден: {input_file}")
+            sys.exit(1)
+        if input_path.suffix.lower() not in SUPPORTED_MEDIA_FORMATS:
+            supported = ", ".join(sorted(SUPPORTED_MEDIA_FORMATS))
+            print(f"❌ Неподдерживаемое расширение: {input_path.suffix or '(без расширения)'}")
+            print(f"Поддерживаются: {supported}")
+            sys.exit(1)
+        return input_path
+
+    media_files = find_media_files(Path.cwd())
+    if not media_files:
+        supported = ", ".join(sorted(SUPPORTED_MEDIA_FORMATS))
+        print("❌ В текущей папке не найден аудио/видео файл")
+        print(f"Поддерживаются: {supported}")
+        print("Или укажите файл явно: python transcribe.py path/to/file.mp4")
+        sys.exit(1)
+
+    if len(media_files) > 1:
+        print("❌ В текущей папке найдено несколько медиафайлов:")
+        for path in media_files:
+            print(f"  - {path.name}")
+        print("Укажите нужный файл явно, например: python transcribe.py video.mp4")
+        sys.exit(1)
+
+    input_path = media_files[0]
+    print(f"📄 Найден файл: {input_path.name}")
+    return input_path
+
+
 def convert_to_wav(input_file: str) -> str:
     wav_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False).name
     print("🎥 Конвертирую в wav 16kHz...")
@@ -225,11 +274,33 @@ def split_wav(wav_file: str, segment_duration: int = 20) -> list:
     return [str(s) for s in segments]
 
 
+def gigaam_cache_model_name(model_type: str) -> str:
+    if model_type in {"rnnt", "ctc"}:
+        return f"v2_{model_type}"
+    return model_type
+
+
+def print_gigaam_download_hint(model_type: str, error: Exception) -> None:
+    cache_model_name = gigaam_cache_model_name(model_type)
+    model_path = MODEL_CACHE_DIR / f"{cache_model_name}.ckpt"
+    model_url = f"{GIGAAM_MODEL_BASE_URL}/{cache_model_name}.ckpt"
+
+    print(f"❌ Не удалось загрузить веса GigaAM: {error}")
+    print("Если вы запускаете проект в WSL и Linux-сеть не видит CDN, скачайте модель вручную:")
+    print(f"  1. {model_url}")
+    print(f"  2. сохраните файл как {model_path}")
+    print("После этого повторный запуск возьмёт модель из локального кэша.")
+
+
 def load_asr_model(model_type: str):
     import gigaam
 
     MODEL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    return gigaam.load_model(model_type, download_root=str(MODEL_CACHE_DIR))
+    try:
+        return gigaam.load_model(model_type, download_root=str(MODEL_CACHE_DIR))
+    except urllib.error.URLError as exc:
+        print_gigaam_download_hint(model_type, exc)
+        sys.exit(1)
 
 
 def transcribe_segment(segment_file: str, model) -> str:
@@ -240,145 +311,38 @@ def format_timestamp(seconds: int) -> str:
     return str(timedelta(seconds=seconds)).split('.')[0]
 
 
-def build_ollama_prompt(transcript: str) -> str:
-    return (
-        "Сделай краткую и понятную сводку этого транскрипта на русском языке.\n"
-        "Используй только информацию из транскрипта и не додумывай факты.\n"
-        "Если в разговоре есть договорённости или следующие шаги, кратко выдели их отдельно.\n\n"
-        f"Транскрипт:\n{transcript}"
-    )
-
-
-def run_ollama_postprocess(transcript: str, model: str) -> str:
-    prompt = build_ollama_prompt(transcript)
-    result = run_command(
-        ["ollama", "run", model],
-        capture_output=True,
-        input_text=prompt,
-    )
-    return sanitize_ollama_output(result.stdout)
-
-
-def sanitize_ollama_output(text: str) -> str:
-    cleaned = text.strip()
-    if not cleaned:
-        return ""
-
-    cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
-    cleaned = cleaned.replace("...done thinking.", "").strip()
-    cleaned = re.sub(
-        r"(?is)^thinking\.\.\..*?(?=^#\s+|^\*\*|^итоги\b|^сводка\b|^резюме\b|^ключевые тезисы\b|^action items\b)",
-        "",
-        cleaned,
-        flags=re.MULTILINE,
-    ).strip()
-    cleaned = re.sub(
-        r"(?is)^thinking process:.*?(?=^#\s+|^\*\*|^итоги\b|^сводка\b|^резюме\b|^ключевые тезисы\b|^action items\b)",
-        "",
-        cleaned,
-        flags=re.MULTILINE,
-    ).strip()
-
-    heading_match = re.search(r"(?m)^#\s+.+", cleaned)
-    if heading_match:
-        return cleaned[heading_match.start():].strip()
-
-    bold_heading_match = re.search(r"(?m)^\*\*[^*\n]+\*\*", cleaned)
-    if bold_heading_match:
-        return cleaned[bold_heading_match.start():].strip()
-
-    summary_markers = [
-        "Итоги",
-        "Сводка",
-        "Резюме",
-        "Ключевые тезисы",
-        "Action Items",
-    ]
-    for marker in summary_markers:
-        marker_match = re.search(rf"(?m)^{re.escape(marker)}.*", cleaned)
-        if marker_match:
-            return cleaned[marker_match.start():].strip()
-
-    lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
-    filtered_lines = []
-    skip_prefixes = (
-        "thinking",
-        "thinking process",
-        "analyze the request",
-        "analyze the transcript",
-        "key facts extracted",
-        "wait,",
-        "okay,",
-        "let's",
-        "i need to",
-        "the transcript says",
-        "candidate is",
-        "company name:",
-        "project names:",
-        "team structure:",
-        "salary:",
-    )
-
-    for line in lines:
-        normalized = line.casefold()
-        if normalized.startswith(skip_prefixes):
-            continue
-        if re.match(r"^\d+\.\s+\*\*.*\*\*:?$", line):
-            continue
-        if line.startswith("*   **") or line.startswith("**Wait"):
-            continue
-        filtered_lines.append(line)
-
-    cleaned = "\n".join(filtered_lines).strip()
-    if cleaned:
-        return cleaned
-
-    return cleaned
-
-
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("input_file", help="Путь к аудио/видео файлу")
+    parser.add_argument(
+        "input_file",
+        nargs="?",
+        help="Путь к аудио/видео файлу. Если не указан, скрипт попробует найти файл в текущей папке",
+    )
     parser.add_argument("--model", choices=["rnnt", "ctc"], default="rnnt")
     parser.add_argument("--segment", type=positive_int, default=15)
     parser.add_argument("--output", help="Путь к выходному txt-файлу")
-    parser.add_argument(
-        "--summary",
-        action="store_true",
-        help="Дополнительно обработать итоговый транскрипт через Ollama и сохранить *_summary.txt",
-    )
-    parser.add_argument(
-        "--ollama-model",
-        default="ministral-3:3b",
-        help="Локальная модель Ollama для постобработки, например ministral-3:3b",
-    )
     args = parser.parse_args()
-    ensure_dependency("ffmpeg")
+    ensure_dependency("ffmpeg", "sudo apt update && sudo apt install -y ffmpeg")
     ensure_python_dependency("gigaam", "gigaam")
-    if args.summary:
-        ensure_dependency("ollama")
 
-    input_path = Path(args.input_file)
-    if not input_path.exists():
-        print(f"❌ Файл не найден: {args.input_file}")
-        sys.exit(1)
+    input_path = resolve_input_file(args.input_file)
 
     wav_file = None
     segments = []
     asr_model = None
 
     try:
-        if needs_conversion(args.input_file):
-            wav_file = convert_to_wav(args.input_file)
+        if needs_conversion(str(input_path)):
+            wav_file = convert_to_wav(str(input_path))
         else:
-            wav_file = args.input_file
+            wav_file = str(input_path)
 
         segments = split_wav(wav_file, args.segment)
         print(f"📦 Загружаю модель GigaAM ({args.model.upper()})...")
         asr_model = load_asr_model(args.model)
         print("✅ Модель загружена")
 
-        output_file = args.output or (input_path.stem + "_транскрипция.txt")
+        output_file = args.output or (input_path.stem + "_transcript.txt")
         transcript_chunks: list[tuple[str, str]] = []
 
         print(f"\n📝 Транскрипция ({args.model.upper()})...\n")
@@ -410,28 +374,8 @@ def main():
 
         print(f"\n✅ Готово! Результат сохранён в: {output_file}")
 
-        if args.summary and transcript_chunks:
-            print(f"🧠 Постобработка через Ollama ({args.ollama_model})...")
-            llm_result = run_ollama_postprocess(
-                transcript="\n\n".join(
-                    f"[{ts}]\n{chunk_text}" for ts, chunk_text in transcript_chunks
-                ),
-                model=args.ollama_model,
-            )
-            llm_output_path = input_path.with_name(f"{input_path.stem}_summary.txt")
-            with open(llm_output_path, "w", encoding="utf-8") as f:
-                f.write("LLM POST-PROCESSING\n")
-                f.write(
-                    f"Модель распознавания: {args.model.upper()} | "
-                    f"Ollama: {args.ollama_model}\n"
-                )
-                f.write("=" * 70 + "\n\n")
-                f.write(llm_result + "\n")
-
-            print(f"✅ LLM-результат сохранён в: {llm_output_path}")
-
     finally:
-        if wav_file and wav_file != args.input_file:
+        if wav_file and Path(wav_file) != input_path:
             Path(wav_file).unlink(missing_ok=True)
         
         for seg in segments:
