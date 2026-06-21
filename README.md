@@ -1,167 +1,107 @@
 # Local Transcription CLI
 
-Небольшой CLI-скрипт для локальной транскрибации аудио и видео через `ffmpeg` и `gigaam`.
-
-Скрипт:
-- принимает аудио или видеофайл;
-- при необходимости конвертирует его в `wav 16kHz mono`;
-- разбивает запись на сегменты;
-- прогоняет каждый сегмент через `gigaam`;
-- сохраняет результат в `.txt` с таймкодами.
-
-## Зачем это нужно
-
-Это простой персональный инструмент для быстрой офлайн-транскрибации интервью, звонков, созвонов и заметок без облачных сервисов.
+Локальная транскрибация аудио и видео через `ffmpeg` и `GigaAM` с опциональной
+локальной сводкой через `Ollama`. Версия предназначена для macOS на Apple
+Silicon.
 
 ## Возможности
 
-- Поддержка `mp4`, `mov`, `avi`, `mkv`, `webm`, `m4a`, `mp3`, `wav`, `flac`, `aac`, `ogg`
-- Модели `rnnt` и `ctc`
-- Настраиваемая длина сегмента
-- Сохранение результата в текстовый файл
-- Минимальная постобработка шума из вывода распознавания
+- `mp4`, `mov`, `avi`, `mkv`, `webm`, `m4a`, `mp3`, `wav`, `flac`, `aac`, `ogg`;
+- модели GigaAM `rnnt` и `ctc`;
+- автоматический поиск единственного медиафайла в текущей папке;
+- настраиваемая длина сегмента и текстовый результат с таймкодами;
+- локальная сводка и action items через Ollama по флагу `--summary`;
+- локальный кэш весов GigaAM в `.cache/gigaam`.
 
-## Требования
+Распознавание речи выполняет GigaAM. Ollama не отправляет транскрипт в облако и
+используется только для дополнительной сводки.
 
-- Python 3.11+
-- `ffmpeg`
-- `gigaam`
+## Требования для macOS
 
-> Важно: для этого проекта лучше использовать Python 3.11. На Python 3.14 зависимости `gigaam` могут не устанавливаться или работать нестабильно.
+- macOS на Apple Silicon;
+- Python 3.11;
+- Homebrew;
+- `ffmpeg`;
+- Ollama — только если нужна сводка.
 
-## Установка
+Python 3.14 пока лучше не использовать: зависимости GigaAM/MLX могут быть с ним
+несовместимы.
 
-### 1. Клонировать репозиторий
-
-```bash
-git clone https://github.com/JoehFlu/local-transcription-cli.git
-cd local-transcription-cli
-```
-
-### 2. Установить системные зависимости в Ubuntu/WSL
-
-В Ubuntu внутри WSL:
+## Установка на macOS
 
 ```bash
-sudo apt update
-sudo apt install -y ffmpeg python3.11 python3.11-venv python3-pip
+brew install python@3.11 ffmpeg
+brew install --cask ollama
+
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install -U pip
+python -m pip install -r requirements.txt
 ```
 
 Проверка:
 
 ```bash
-ffmpeg -version
-python3.11 --version
-```
-
-Если пакет `python3.11` недоступен в вашей версии Ubuntu, установите Python 3.11 любым привычным способом для вашего дистрибутива, затем возвращайтесь к следующему шагу.
-
-### 3. Подготовить окружение Python
-
-```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
-pip install -U pip
-pip install -r requirements.txt
-```
-
-Файл `requirements.txt` устанавливает базовые Python-зависимости проекта, включая `gigaam`.
-
-### 4. Проверить Python-зависимости
-
-После установки убедитесь, что Python-модули импортируются:
-
-```bash
 python -c "import gigaam; print('gigaam ok')"
+ffmpeg -version
 ```
 
-Если хотите установить зависимости вручную без `requirements.txt`:
+Для локальной сводки запустите приложение Ollama и загрузите модель:
 
 ```bash
-pip install gigaam
+ollama pull ministral-3:3b
+ollama list
 ```
 
 ## Использование
 
-Быстрый старт для текущего локального окружения:
+Если в текущей папке ровно один медиафайл:
 
 ```bash
 source .venv/bin/activate
 python transcribe.py
 ```
 
-Если в текущей папке лежит ровно один аудио/видео файл, скрипт найдёт его автоматически по расширению. Переименовывать файл в `video.mp4` или `audio.mp3` не нужно.
-
-По умолчанию результат сохраняется в файл `<имя_исходного_файла>_transcript.txt`.
-
-При первом запуске `gigaam` скачает веса модели в локальную папку `.cache/gigaam`, поэтому первый старт может занять заметно больше времени.
-
-Если в WSL скачивание модели падает из-за сети, скачайте нужный файл вручную и положите его в кэш проекта:
+Или укажите файл явно:
 
 ```bash
-mkdir -p .cache/gigaam
-```
-
-Для модели `rnnt` нужен файл:
-
-```text
-https://cdn.chatwm.opensmodel.sberdevices.ru/GigaAM/v2_rnnt.ckpt
-```
-
-Сохраните его как:
-
-```text
-.cache/gigaam/v2_rnnt.ckpt
-```
-
-После этого повторный запуск возьмёт модель из локального кэша.
-
-Явно указать файл, если в папке несколько медиафайлов:
-
-```bash
-python transcribe.py interview.mkv
-```
-
-Выбор модели и длины сегмента:
-
-```bash
+python transcribe.py interview.m4a
 python transcribe.py interview.mkv --model rnnt --segment 15
-```
-
-Явно указать путь к выходному файлу:
-
-```bash
 python transcribe.py interview.mp3 --output result.txt
 ```
 
-## Пример результата
+Транскрибация и локальная сводка через Ollama:
 
-```text
-ТРАНСКРИПЦИЯ
-Модель: RNNT | Сегмент: 15 сек
-======================================================================
-
-[0:00:00]
-Пример распознанного текста...
+```bash
+python transcribe.py interview.m4a --summary
+python transcribe.py interview.m4a --summary --ollama-model ministral-3:3b
 ```
 
-## Как это работает
+По умолчанию создаются:
 
-1. Входной файл проверяется на существование и поддерживаемый формат.
-2. Если нужно, выполняется конвертация в `wav 16kHz mono`.
-3. Аудио режется на сегменты фиксированной длины.
-4. Каждый сегмент отправляется в `gigaam`.
-5. Результат очищается от служебного мусора и сохраняется в `.txt`.
+- `<имя>_transcript.txt`;
+- `<имя>_summary.txt`, если указан `--summary`.
+
+## Модели GigaAM
+
+При первом запуске веса скачиваются в `.cache/gigaam`. Если автоматическая
+загрузка недоступна, скачайте модель вручную:
+
+- RNNT: `https://cdn.chatwm.opensmodel.sberdevices.ru/GigaAM/v2_rnnt.ckpt`
+- CTC: `https://cdn.chatwm.opensmodel.sberdevices.ru/GigaAM/v2_ctc.ckpt`
+
+Файл нужно сохранить как `.cache/gigaam/v2_rnnt.ckpt` или
+`.cache/gigaam/v2_ctc.ckpt`.
 
 ## Ограничения
 
-- На практике для `rnnt` чаще лучше работают сегменты около `15` секунд, чем `20+`.
-- Таймкоды сейчас считаются по размеру сегмента, а не по фактической длительности каждого куска.
-- Постобработка текста остаётся минимальной и может требовать ручной правки.
-- Для очень длинных файлов производительность зависит от скорости `ffmpeg` и модели распознавания.
+- Для short-form GigaAM сегмент ограничен 25 секундами; обычно хорошо работает
+  значение 15 секунд.
+- Таймкоды считаются по размеру сегмента.
+- Скорость зависит от длительности записи, модели и доступных ресурсов.
+- Ollama должна быть запущена, а выбранная модель — заранее загружена локально.
 
 ## License
 
-This project is released under the MIT License.
-
-Third-party dependencies, `ffmpeg`, and model weights remain subject to their own licenses and terms.
+MIT. Сторонние зависимости, `ffmpeg` и веса моделей распространяются на своих
+условиях.

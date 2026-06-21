@@ -52,6 +52,14 @@ def ensure_dependency(command: str, install_hint: str | None = None) -> None:
     sys.exit(1)
 
 
+def ffmpeg_install_hint() -> str:
+    return "brew install ffmpeg"
+
+
+def ollama_install_hint() -> str:
+    return "brew install --cask ollama"
+
+
 def ensure_python_dependency(module_name: str, package_name: str) -> None:
     try:
         __import__(module_name)
@@ -286,7 +294,7 @@ def print_gigaam_download_hint(model_type: str, error: Exception) -> None:
     model_url = f"{GIGAAM_MODEL_BASE_URL}/{cache_model_name}.ckpt"
 
     print(f"❌ Не удалось загрузить веса GigaAM: {error}")
-    print("Если вы запускаете проект в WSL и Linux-сеть не видит CDN, скачайте модель вручную:")
+    print("Если автоматическая загрузка недоступна, скачайте модель вручную:")
     print(f"  1. {model_url}")
     print(f"  2. сохраните файл как {model_path}")
     print("После этого повторный запуск возьмёт модель из локального кэша.")
@@ -311,8 +319,86 @@ def format_timestamp(seconds: int) -> str:
     return str(timedelta(seconds=seconds)).split('.')[0]
 
 
+def build_ollama_prompt(transcript: str) -> str:
+    return (
+        "Сделай краткую и понятную сводку этого транскрипта на русском языке.\n"
+        "Используй только информацию из транскрипта и не додумывай факты.\n"
+        "Если в разговоре есть договорённости или следующие шаги, кратко выдели их отдельно.\n\n"
+        f"Транскрипт:\n{transcript}"
+    )
+
+
+def sanitize_ollama_output(text: str) -> str:
+    cleaned = text.strip()
+    if not cleaned:
+        return ""
+
+    cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
+    cleaned = cleaned.replace("...done thinking.", "").strip()
+    cleaned = re.sub(
+        r"(?is)^thinking\.\.\..*?"
+        r"(?=^#\s+|^\*\*|^итоги\b|^сводка\b|^резюме\b|"
+        r"^ключевые тезисы\b|^action items\b)",
+        "",
+        cleaned,
+        flags=re.MULTILINE,
+    ).strip()
+    cleaned = re.sub(
+        r"(?is)^thinking process:.*?"
+        r"(?=^#\s+|^\*\*|^итоги\b|^сводка\b|^резюме\b|"
+        r"^ключевые тезисы\b|^action items\b)",
+        "",
+        cleaned,
+        flags=re.MULTILINE,
+    ).strip()
+
+    heading_match = re.search(r"(?m)^#\s+.+", cleaned)
+    if heading_match:
+        return cleaned[heading_match.start():].strip()
+
+    bold_heading_match = re.search(r"(?m)^\*\*[^*\n]+\*\*", cleaned)
+    if bold_heading_match:
+        return cleaned[bold_heading_match.start():].strip()
+
+    for marker in ("Итоги", "Сводка", "Резюме", "Ключевые тезисы", "Action Items"):
+        marker_match = re.search(rf"(?m)^{re.escape(marker)}.*", cleaned)
+        if marker_match:
+            return cleaned[marker_match.start():].strip()
+
+    skip_prefixes = (
+        "thinking",
+        "thinking process",
+        "analyze the request",
+        "analyze the transcript",
+        "key facts extracted",
+        "wait,",
+        "okay,",
+        "let's",
+        "i need to",
+        "the transcript says",
+    )
+    filtered_lines = []
+    for line in (line.strip() for line in cleaned.splitlines()):
+        if not line or line.casefold().startswith(skip_prefixes):
+            continue
+        filtered_lines.append(line)
+
+    return "\n".join(filtered_lines).strip()
+
+
+def run_ollama_postprocess(transcript: str, model: str) -> str:
+    result = run_command(
+        ["ollama", "run", model],
+        capture_output=True,
+        input_text=build_ollama_prompt(transcript),
+    )
+    return sanitize_ollama_output(result.stdout)
+
+
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description="Локальная транскрибация через GigaAM с опциональной сводкой через Ollama",
+    )
     parser.add_argument(
         "input_file",
         nargs="?",
@@ -321,9 +407,21 @@ def main():
     parser.add_argument("--model", choices=["rnnt", "ctc"], default="rnnt")
     parser.add_argument("--segment", type=positive_int, default=15)
     parser.add_argument("--output", help="Путь к выходному txt-файлу")
+    parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="Создать локальную сводку через Ollama и сохранить *_summary.txt",
+    )
+    parser.add_argument(
+        "--ollama-model",
+        default="ministral-3:3b",
+        help="Локальная модель Ollama для сводки (по умолчанию: ministral-3:3b)",
+    )
     args = parser.parse_args()
-    ensure_dependency("ffmpeg", "sudo apt update && sudo apt install -y ffmpeg")
+    ensure_dependency("ffmpeg", ffmpeg_install_hint())
     ensure_python_dependency("gigaam", "gigaam")
+    if args.summary:
+        ensure_dependency("ollama", ollama_install_hint())
 
     input_path = resolve_input_file(args.input_file)
 
@@ -373,6 +471,26 @@ def main():
         transcript_chunks = normalize_transcript_chunks(transcript_chunks)
 
         print(f"\n✅ Готово! Результат сохранён в: {output_file}")
+
+        if args.summary and transcript_chunks:
+            print(f"🧠 Локальная сводка через Ollama ({args.ollama_model})...")
+            llm_result = run_ollama_postprocess(
+                transcript="\n\n".join(
+                    f"[{ts}]\n{chunk_text}" for ts, chunk_text in transcript_chunks
+                ),
+                model=args.ollama_model,
+            )
+            summary_path = input_path.with_name(f"{input_path.stem}_summary.txt")
+            with open(summary_path, "w", encoding="utf-8") as f:
+                f.write("ЛОКАЛЬНАЯ СВОДКА\n")
+                f.write(
+                    f"Модель распознавания: {args.model.upper()} | "
+                    f"Ollama: {args.ollama_model}\n"
+                )
+                f.write("=" * 70 + "\n\n")
+                f.write(llm_result + "\n")
+
+            print(f"✅ Сводка сохранена в: {summary_path}")
 
     finally:
         if wav_file and Path(wav_file) != input_path:
