@@ -8,7 +8,7 @@ Silicon.
 
 - `mp4`, `mov`, `avi`, `mkv`, `webm`, `m4a`, `mp3`, `wav`, `flac`, `aac`, `ogg`;
 - модели GigaAM `rnnt` и `ctc`;
-- автоматический поиск единственного медиафайла в текущей папке;
+- автоматический поиск и последовательная обработка медиафайлов в текущей папке;
 - настраиваемая длина сегмента и текстовый результат с таймкодами;
 - локальная сводка и action items через Ollama по флагу `--summary`;
 - локальный кэш весов GigaAM в `.cache/gigaam`.
@@ -55,17 +55,20 @@ ollama list
 
 ## Использование
 
-Если в текущей папке ровно один медиафайл:
+Если в текущей папке лежат медиафайлы, скрипт обработает их все по очереди:
 
 ```bash
 source .venv/bin/activate
 python transcribe.py
 ```
 
-Или укажите файл явно:
+Для каждого файла будет создан отдельный результат вида `<имя>_transcript.txt`.
+
+Или укажите один/несколько файлов явно:
 
 ```bash
 python transcribe.py interview.m4a
+python transcribe.py video1.mp4 video2.mp4 video3.mp4
 python transcribe.py interview.mkv --model rnnt --segment 15
 python transcribe.py interview.mp3 --output result.txt
 ```
@@ -75,12 +78,16 @@ python transcribe.py interview.mp3 --output result.txt
 ```bash
 python transcribe.py interview.m4a --summary
 python transcribe.py interview.m4a --summary --ollama-model ministral-3:3b
+python transcribe.py video1.mp4 video2.mp4 --summary
 ```
 
 По умолчанию создаются:
 
 - `<имя>_transcript.txt`;
 - `<имя>_summary.txt`, если указан `--summary`.
+
+Флаг `--output` можно использовать только при обработке одного файла, чтобы
+несколько транскриптов случайно не записались в один и тот же путь.
 
 ## Модели GigaAM
 

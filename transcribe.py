@@ -220,37 +220,39 @@ def find_media_files(directory: Path) -> list[Path]:
     )
 
 
-def resolve_input_file(input_file: str | None) -> Path:
-    if input_file:
-        input_path = Path(input_file)
-        if not input_path.exists():
-            print(f"❌ Файл не найден: {input_file}")
-            sys.exit(1)
-        if input_path.suffix.lower() not in SUPPORTED_MEDIA_FORMATS:
-            supported = ", ".join(sorted(SUPPORTED_MEDIA_FORMATS))
-            print(f"❌ Неподдерживаемое расширение: {input_path.suffix or '(без расширения)'}")
-            print(f"Поддерживаются: {supported}")
-            sys.exit(1)
-        return input_path
+def validate_input_file(input_file: str) -> Path:
+    input_path = Path(input_file)
+    if not input_path.exists():
+        print(f"❌ Файл не найден: {input_file}")
+        sys.exit(1)
+    if input_path.suffix.lower() not in SUPPORTED_MEDIA_FORMATS:
+        supported = ", ".join(sorted(SUPPORTED_MEDIA_FORMATS))
+        print(f"❌ Неподдерживаемое расширение: {input_path.suffix or '(без расширения)'}")
+        print(f"Поддерживаются: {supported}")
+        sys.exit(1)
+    return input_path
+
+
+def resolve_input_files(input_files: list[str]) -> list[Path]:
+    if input_files:
+        return [validate_input_file(input_file) for input_file in input_files]
 
     media_files = find_media_files(Path.cwd())
     if not media_files:
         supported = ", ".join(sorted(SUPPORTED_MEDIA_FORMATS))
         print("❌ В текущей папке не найден аудио/видео файл")
         print(f"Поддерживаются: {supported}")
-        print("Или укажите файл явно: python transcribe.py path/to/file.mp4")
+        print("Или укажите файлы явно: python transcribe.py path/to/file1.mp4 path/to/file2.mp4")
         sys.exit(1)
 
-    if len(media_files) > 1:
-        print("❌ В текущей папке найдено несколько медиафайлов:")
+    if len(media_files) == 1:
+        print(f"📄 Найден файл: {media_files[0].name}")
+    else:
+        print(f"📄 Найдено медиафайлов: {len(media_files)}")
         for path in media_files:
             print(f"  - {path.name}")
-        print("Укажите нужный файл явно, например: python transcribe.py video.mp4")
-        sys.exit(1)
 
-    input_path = media_files[0]
-    print(f"📄 Найден файл: {input_path.name}")
-    return input_path
+    return media_files
 
 
 def convert_to_wav(input_file: str) -> str:
@@ -395,14 +397,102 @@ def run_ollama_postprocess(transcript: str, model: str) -> str:
     return sanitize_ollama_output(result.stdout)
 
 
+def transcribe_file(
+    input_path: Path,
+    asr_model,
+    model_name: str,
+    segment_duration: int,
+    output_file: str | None = None,
+    create_summary: bool = False,
+    ollama_model: str = "ministral-3:3b",
+) -> None:
+    wav_file = None
+    segments = []
+
+    try:
+        print(f"\n{'=' * 70}")
+        print(f"🎧 Файл: {input_path}")
+
+        if needs_conversion(str(input_path)):
+            wav_file = convert_to_wav(str(input_path))
+        else:
+            wav_file = str(input_path)
+
+        segments = split_wav(wav_file, segment_duration)
+        transcript_path = output_file or str(input_path.with_name(f"{input_path.stem}_transcript.txt"))
+        transcript_chunks: list[tuple[str, str]] = []
+
+        print(f"\n📝 Транскрипция ({model_name})...\n")
+        write_transcript_file(transcript_path, model_name, segment_duration, transcript_chunks)
+
+        current_time = 0
+        for seg in segments:
+            ts = format_timestamp(current_time)
+            print(f"[{ts}] ", end="", flush=True)
+
+            raw = transcribe_segment(seg, asr_model)
+            cleaned = clean_text(raw)
+
+            if cleaned:
+                print(cleaned[:120] + "..." if len(cleaned) > 120 else cleaned)
+                transcript_chunks.append((ts, cleaned))
+                write_transcript_file(
+                    transcript_path,
+                    model_name,
+                    segment_duration,
+                    transcript_chunks,
+                )
+            else:
+                print("(пусто)")
+
+            current_time += segment_duration
+
+        transcript_chunks = normalize_transcript_chunks(transcript_chunks)
+
+        print(f"\n✅ Готово! Результат сохранён в: {transcript_path}")
+
+        if create_summary and transcript_chunks:
+            print(f"🧠 Локальная сводка через Ollama ({ollama_model})...")
+            llm_result = run_ollama_postprocess(
+                transcript="\n\n".join(
+                    f"[{ts}]\n{chunk_text}" for ts, chunk_text in transcript_chunks
+                ),
+                model=ollama_model,
+            )
+            summary_path = input_path.with_name(f"{input_path.stem}_summary.txt")
+            with open(summary_path, "w", encoding="utf-8") as f:
+                f.write("ЛОКАЛЬНАЯ СВОДКА\n")
+                f.write(
+                    f"Модель распознавания: {model_name} | "
+                    f"Ollama: {ollama_model}\n"
+                )
+                f.write("=" * 70 + "\n\n")
+                f.write(llm_result + "\n")
+
+            print(f"✅ Сводка сохранена в: {summary_path}")
+
+    finally:
+        if wav_file and Path(wav_file) != input_path:
+            Path(wav_file).unlink(missing_ok=True)
+
+        for seg in segments:
+            Path(seg).unlink(missing_ok=True)
+            Path(seg).with_suffix(".txt").unlink(missing_ok=True)
+
+        print("🧹 Временные файлы удалены")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Локальная транскрибация через GigaAM с опциональной сводкой через Ollama",
     )
     parser.add_argument(
-        "input_file",
-        nargs="?",
-        help="Путь к аудио/видео файлу. Если не указан, скрипт попробует найти файл в текущей папке",
+        "input_files",
+        nargs="*",
+        help=(
+            "Пути к аудио/видео файлам. Если не указаны, скрипт обработает "
+            "все поддерживаемые медиафайлы в текущей папке"
+        ),
     )
     parser.add_argument("--model", choices=["rnnt", "ctc"], default="rnnt")
     parser.add_argument("--segment", type=positive_int, default=15)
@@ -418,89 +508,36 @@ def main():
         help="Локальная модель Ollama для сводки (по умолчанию: ministral-3:3b)",
     )
     args = parser.parse_args()
+
+    input_paths = resolve_input_files(args.input_files)
+    if args.output and len(input_paths) > 1:
+        parser.error("--output можно использовать только при обработке одного файла")
+
     ensure_dependency("ffmpeg", ffmpeg_install_hint())
     ensure_python_dependency("gigaam", "gigaam")
     if args.summary:
         ensure_dependency("ollama", ollama_install_hint())
 
-    input_path = resolve_input_file(args.input_file)
+    print(f"📦 Загружаю модель GigaAM ({args.model.upper()})...")
+    asr_model = load_asr_model(args.model)
+    print("✅ Модель загружена")
 
-    wav_file = None
-    segments = []
-    asr_model = None
+    for index, input_path in enumerate(input_paths, start=1):
+        if len(input_paths) > 1:
+            print(f"\n▶️ Файл {index}/{len(input_paths)}")
 
-    try:
-        if needs_conversion(str(input_path)):
-            wav_file = convert_to_wav(str(input_path))
-        else:
-            wav_file = str(input_path)
+        transcribe_file(
+            input_path=input_path,
+            asr_model=asr_model,
+            model_name=args.model.upper(),
+            segment_duration=args.segment,
+            output_file=args.output,
+            create_summary=args.summary,
+            ollama_model=args.ollama_model,
+        )
 
-        segments = split_wav(wav_file, args.segment)
-        print(f"📦 Загружаю модель GigaAM ({args.model.upper()})...")
-        asr_model = load_asr_model(args.model)
-        print("✅ Модель загружена")
-
-        output_file = args.output or (input_path.stem + "_transcript.txt")
-        transcript_chunks: list[tuple[str, str]] = []
-
-        print(f"\n📝 Транскрипция ({args.model.upper()})...\n")
-        write_transcript_file(output_file, args.model.upper(), args.segment, transcript_chunks)
-
-        current_time = 0
-        for seg in segments:
-            ts = format_timestamp(current_time)
-            print(f"[{ts}] ", end="", flush=True)
-
-            raw = transcribe_segment(seg, asr_model)
-            cleaned = clean_text(raw)
-
-            if cleaned:
-                print(cleaned[:120] + "..." if len(cleaned) > 120 else cleaned)
-                transcript_chunks.append((ts, cleaned))
-                write_transcript_file(
-                    output_file,
-                    args.model.upper(),
-                    args.segment,
-                    transcript_chunks,
-                )
-            else:
-                print("(пусто)")
-
-            current_time += args.segment
-
-        transcript_chunks = normalize_transcript_chunks(transcript_chunks)
-
-        print(f"\n✅ Готово! Результат сохранён в: {output_file}")
-
-        if args.summary and transcript_chunks:
-            print(f"🧠 Локальная сводка через Ollama ({args.ollama_model})...")
-            llm_result = run_ollama_postprocess(
-                transcript="\n\n".join(
-                    f"[{ts}]\n{chunk_text}" for ts, chunk_text in transcript_chunks
-                ),
-                model=args.ollama_model,
-            )
-            summary_path = input_path.with_name(f"{input_path.stem}_summary.txt")
-            with open(summary_path, "w", encoding="utf-8") as f:
-                f.write("ЛОКАЛЬНАЯ СВОДКА\n")
-                f.write(
-                    f"Модель распознавания: {args.model.upper()} | "
-                    f"Ollama: {args.ollama_model}\n"
-                )
-                f.write("=" * 70 + "\n\n")
-                f.write(llm_result + "\n")
-
-            print(f"✅ Сводка сохранена в: {summary_path}")
-
-    finally:
-        if wav_file and Path(wav_file) != input_path:
-            Path(wav_file).unlink(missing_ok=True)
-        
-        for seg in segments:
-            Path(seg).unlink(missing_ok=True)
-            Path(seg).with_suffix(".txt").unlink(missing_ok=True)
-
-        print("🧹 Все временные файлы удалены")
+    if len(input_paths) > 1:
+        print(f"\n✅ Все файлы обработаны: {len(input_paths)}")
 
 
 if __name__ == "__main__":
