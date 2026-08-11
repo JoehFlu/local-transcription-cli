@@ -52,12 +52,46 @@ def ensure_dependency(command: str, install_hint: str | None = None) -> None:
     sys.exit(1)
 
 
-def ffmpeg_install_hint() -> str:
-    return "brew install ffmpeg"
+def runtime_platform(platform_name: str | None = None) -> str:
+    platform_name = platform_name or sys.platform
+    if platform_name == "darwin":
+        return "macos"
+    if platform_name.startswith("linux"):
+        return "linux"
+    if platform_name == "win32":
+        return "windows"
+    return "other"
 
 
-def ollama_install_hint() -> str:
-    return "brew install --cask ollama"
+def ensure_supported_platform(platform_name: str | None = None) -> None:
+    if runtime_platform(platform_name) != "windows":
+        return
+
+    print("❌ Нативный запуск в Windows не поддерживается")
+    print("Установите WSL 2 с Ubuntu и запустите проект внутри WSL.")
+    sys.exit(1)
+
+
+def ffmpeg_install_hint(platform_name: str | None = None) -> str:
+    current_platform = runtime_platform(platform_name)
+    if current_platform == "macos":
+        return "brew install ffmpeg"
+    if current_platform == "linux":
+        return "sudo apt update && sudo apt install -y ffmpeg"
+    if current_platform == "windows":
+        return "установите WSL 2 с Ubuntu и запустите проект внутри WSL"
+    return "https://ffmpeg.org/download.html"
+
+
+def ollama_install_hint(platform_name: str | None = None) -> str:
+    current_platform = runtime_platform(platform_name)
+    if current_platform == "macos":
+        return "brew install --cask ollama"
+    if current_platform == "linux":
+        return "curl -fsSL https://ollama.com/install.sh | sh"
+    if current_platform == "windows":
+        return "установите Ollama и запускайте проект внутри WSL 2"
+    return "https://ollama.com/download"
 
 
 def ensure_python_dependency(module_name: str, package_name: str) -> None:
@@ -509,6 +543,7 @@ def main():
     )
     args = parser.parse_args()
 
+    ensure_supported_platform()
     input_paths = resolve_input_files(args.input_files)
     if args.output and len(input_paths) > 1:
         parser.error("--output можно использовать только при обработке одного файла")
